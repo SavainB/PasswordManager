@@ -1,86 +1,134 @@
 import tkinter as tk
 import csv
-# Création de la fenêtre principale
-fenetre = tk.Tk()
-fenetre.title("Application avec plusieurs pages")
-fenetre.geometry("400x300")
-string =["Ajoutez votre mot de passe"]
+import tempfile
+import os
+import shutil
+from cryptography.fernet import Fernet
 
-import csv
-fichier_csv = "passwords.csv"
-def addpassword(enterWebSite, enterPassword):
+# Générer une clé de chiffrement et la sauvegarder
+KEY_FILE = "key.key"
+CSV_FILE = "passwords.csv"
 
-    champs = ["website", "password"]
+def generate_key():
+    if not os.path.exists(KEY_FILE):
+        key = Fernet.generate_key()
+        with open(KEY_FILE, "wb") as key_file:
+            key_file.write(key)
 
-    # Créer un dictionnaire contenant les données
-    entry = {"website": enterWebSite, "password": enterPassword}
+def load_key():
+    with open(KEY_FILE, "rb") as key_file:
+        return key_file.read()
 
-    # Vérifier si le fichier existe et s'il est vide
-    try:
-        with open(fichier_csv, mode="r", encoding="utf-8") as fichier:
-            contient_donnees = fichier.read().strip() != ""  # Vérifie si le fichier contient déjà des données
-    except FileNotFoundError:
-        contient_donnees = False  # Si le fichier n'existe pas, on le considère comme vide
+generate_key()
+key = load_key()
+cipher_suite = Fernet(key)
 
-    # Ouvrir le fichier en mode ajout ("a")
-    with open(fichier_csv, mode="a", newline="", encoding="utf-8") as fichier:
-        writer = csv.DictWriter(fichier, fieldnames=champs)
+def encrypt_password(password):
+    return cipher_suite.encrypt(password.encode()).decode()
 
-        # Écrire l'en-tête uniquement si le fichier est vide
-        if not contient_donnees:
+def decrypt_password(encrypted_password):
+    return cipher_suite.decrypt(encrypted_password.encode()).decode()
+
+def add_password(website, password):
+    encrypted_password = encrypt_password(password)
+    fields = ["website", "password"]
+    entry = {"website": website, "password": encrypted_password}
+    
+    file_exists = os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0
+    
+    with open(CSV_FILE, mode="a", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fields)
+        if not file_exists:
             writer.writeheader()
+        writer.writerow(entry)
 
-        # Écriture de l'entrée
-        writer.writerow(entry)  # ✅ Correction : on écrit une seule ligne
-
-    print("Mot de passe ajouté avec succès !")
-
-
-
-# Fonction pour afficher une page
-def afficher_page(page):
-    # Supprime tout le contenu actuel
-    for widget in fenetre.winfo_children():
-        widget.destroy()
-
-    if page == "accueil":
-        label = tk.Label(fenetre, text="Quelle option ?", font=("Arial", 16))
-        label.pack(pady=20)
-        bouton = tk.Button(fenetre, text="Ajoutez votre mot de passe", command=lambda: afficher_page("add"))
-        bouton.pack()
-        bouton = tk.Button(fenetre, text="Editez vos mot de passe", command=lambda: afficher_page("CRUD"))
-        bouton.pack()
-    elif page == "add":
-        label = tk.Label(fenetre, text="Ajoutez votre mot de passe", font=("Arial", 16))
-        label.pack(pady=20)
-        champ=["",""]
-        champ_website = tk.Entry(fenetre, font=("Arial", 14))  # Champ de saisie
-        champ_website.pack(pady=20)
-        champ = tk.Entry(fenetre, font=("Arial", 14))  # Champ de saisie
-        champ.pack(pady=20)
-        bouton = tk.Button(fenetre, text="ajoutez", command=lambda:addpassword(champ_website.get(),champ.get()))
-        bouton.pack()
-        bouton = tk.Button(fenetre, text="Menu", command=lambda: afficher_page("accueil"))
-        bouton.pack()
-    elif page == "CRUD":
-        label = tk.Label(fenetre, text="Editez vos mot de passe", font=("Arial", 16))
-        try:
-            with open(fichier_csv, mode="r", encoding="utf-8") as fichier:
-                reader = csv.DictReader(fichier)  # Lire les données sous forme de dictionnaires
-                
-                data = list(reader)  # Convertir en liste de dictionnaires
-                
-                print(data ) # Retourne toutes les lignes sous forme de liste de dictionnaires
+def delete_entry(line_number):
+    temp_file = tempfile.NamedTemporaryFile(mode="w", newline="", encoding="utf-8", delete=False)
+    
+    with open(CSV_FILE, "r", newline="", encoding="utf-8") as file, temp_file:
+        reader = csv.reader(file)
+        writer = csv.writer(temp_file)
         
+        for i, row in enumerate(reader):
+            if i != line_number:
+                writer.writerow(row)
+    
+    shutil.move(temp_file.name, CSV_FILE)
+    display_page("manage")
+
+def modify_entry(index, website, new_password):
+    lines = []
+    with open(CSV_FILE, "r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        lines = list(reader)
+    
+    if index < len(lines):
+        lines[index]["website"] = website
+        lines[index]["password"] = encrypt_password(new_password)
+    
+    with open(CSV_FILE, "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=["website", "password"])
+        writer.writeheader()
+        writer.writerows(lines)
+    
+    display_page("manage")
+
+def display_page(page):
+    for widget in root.winfo_children():
+        widget.destroy()
+    
+    if page == "home":
+        tk.Label(root, text="Gestionnaire de mots de passe", font=("Arial", 16)).pack(pady=20)
+        tk.Button(root, text="Ajouter un mot de passe", command=lambda: display_page("add")).pack()
+        tk.Button(root, text="Gérer les mots de passe", command=lambda: display_page("manage")).pack()
+    
+    elif page == "add":
+        tk.Label(root, text="Ajouter un mot de passe", font=("Arial", 16)).pack(pady=20)
+        website_entry = tk.Entry(root, font=("Arial", 14))
+        website_entry.pack(pady=10)
+        password_entry = tk.Entry(root, font=("Arial", 14), show="*")
+        password_entry.pack(pady=10)
+        tk.Button(root, text="Ajouter", command=lambda: add_password(website_entry.get(), password_entry.get())).pack()
+        tk.Button(root, text="Retour", command=lambda: display_page("home")).pack()
+    
+    elif page == "manage":
+        tk.Label(root, text="Vos mots de passe", font=("Arial", 16)).pack()
+        
+        try:
+            with open(CSV_FILE, "r", encoding="utf-8") as file:
+                reader = csv.DictReader(file)
+                for i, row in enumerate(reader):
+                    website = row["website"]
+                    decrypted_password = decrypt_password(row["password"])
+                    
+                    frame = tk.Frame(root)
+                    frame.pack()
+                    
+                    tk.Label(frame, text=f"{website} - {decrypted_password}", font=("Arial", 12)).pack(side=tk.LEFT)
+                    tk.Button(frame, text="Modifier", command=lambda i=i: display_modify_page(i, row["website"]) ).pack(side=tk.LEFT)
+                    tk.Button(frame, text="Supprimer", command=lambda i=i: delete_entry(i+1)).pack(side=tk.LEFT)
         except FileNotFoundError:
-            print("Le fichier n'existe pas encore.")
-            return []  
-        label.pack(pady=20)
-        bouton = tk.Button(fenetre, text="Menu", command=lambda: afficher_page("accueil"))
-        bouton.pack()
+            tk.Label(root, text="Aucun mot de passe enregistré.").pack()
+        
+        tk.Button(root, text="Retour", command=lambda: display_page("home")).pack()
+    
+    elif page == "modify":
+        pass  # Page définie dans display_modify_page()
 
-# Afficher la première page (accueil)
-afficher_page("accueil")
+def display_modify_page(index, website):
+    display_page("modify")
+    tk.Label(root, text="Modifier le mot de passe", font=("Arial", 16)).pack(pady=20)
+    website_entry = tk.Entry(root, font=("Arial", 14))
+    website_entry.insert(0, website)
+    website_entry.pack(pady=10)
+    password_entry = tk.Entry(root, font=("Arial", 14), show="*")
+    password_entry.pack(pady=10)
+    tk.Button(root, text="Modifier", command=lambda: modify_entry(index, website_entry.get(), password_entry.get())).pack()
+    tk.Button(root, text="Retour", command=lambda: display_page("manage")).pack()
 
-# Lancer la fenêtre
-fenetre.mainloop()
+# Création de l'interface principale
+root = tk.Tk()
+root.title("Gestionnaire de mots de passe")
+root.geometry("500x500")
+display_page("home")
+root.mainloop()
